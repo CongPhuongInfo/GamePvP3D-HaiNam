@@ -19,24 +19,43 @@ can Visual Studio.
 
 ## Dieu khien
 
-| Phim         | Chuc nang        |
-|--------------|-------------------|
-| W / Up       | Di toi            |
-| S / Down     | Di lui            |
-| A            | Di ngang trai     |
-| D            | Di ngang phai     |
-| Left / Right | Xoay camera        |
-| Space        | Nhay              |
-| Ctrl / C     | Ngoi (giu de ngoi)|
-| ESC          | Thoat game        |
+| Phim / Chuot     | Chuc nang                                   |
+|-------------------|----------------------------------------------|
+| W / Up            | Di toi                                       |
+| S / Down          | Di lui                                       |
+| A                 | Di ngang trai                                |
+| D                 | Di ngang phai                                |
+| Left / Right      | Xoay camera                                  |
+| Chuot phai        | Nhay                                         |
+| Ctrl / C (giu)    | Ngoi xuong                                   |
+| Chuot trai        | Dung dung cu / vu khi dang cam (danh cho nang cap sau) |
+| ESC               | Thoat game                                   |
 
-**Luu y ve nhay/ngoi**: vi day la engine raycasting 2.5D (nguoi choi luon
-di chuyen tren mot mat phang 2D, khong co truc Z that su cho va cham), nhay
-va ngoi duoc mo phong bang cach dich chuyen "camera" theo chieu doc tren man
-hinh (view-shift) cong voi vat ly parabol don gian cho cu nhay - tao cam
-giac len/xuong that ma khong pha vo cach ban do va va cham dang hoat dong.
-Ngoi con lam giam toc do di chuyen 50%. Day khong phai nhay vuot vat can
-hay ngoi nup that (chua co he thong che khuat/stealth).
+## Truc Z that (khong con chi la hieu ung hinh anh)
+
+Ban do co them 2 loai o moi, dung de test co che nhay/ngoi that su anh huong
+den va cham chu khong chi doi camera:
+
+- **Loai 3 - Kien hang thap** (mau cam tren minimap): chan duong binh
+  thuong, chi vuot qua duoc khi dang nhay du cao (`playerZ >= 0.45`).
+- **Loai 4 - Khe chui** (mau xanh nhat tren minimap): chan duong khi dung
+  thang, chi chui qua duoc khi dang ngoi du thap (`crouchAmount >= 0.6`).
+
+Co mot doan test san trong me cung (hang tren cung, gan diem xuat phat):
+di thang se gap kien hang phai nhay qua, roi den khe phai ngoi xuong moi
+chui qua duoc. Tia raycasting cung duoc chinh de "nhin xuyen" cac o nay khi
+nguoi choi du dieu kien vuot qua, dong thoi van ve dung khoi nua-chieu-cao
+tai vi tri cua no (kien hang chiem nua duoi, khe chui chiem nua tren) thay
+vi bien mat hoan toan - giu cam giac chuong ngai vat that.
+
+## Dung cu / vu khi (chuot trai)
+
+Bien `heldItemName` va sub `UseHeldItem()` trong `Form1.vb` da duoc de san
+lam noi moc: hien tai chuot trai chua lam gi ca (chua trang bi item nao).
+Khi phat trien them he thong item/vu khi, chi can:
+1. Doi `heldItemName` khi nguoi choi nhat/trang bi do.
+2. Vien logic tan cong/su dung (kiem tra va cham, hoat canh, sat thuong...)
+   vao ben trong `UseHeldItem()`.
 
 ## Build
 

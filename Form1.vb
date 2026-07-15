@@ -27,12 +27,12 @@ Public Class Form1
     Private Const WIN_H As Integer = 600
     Private Const FOV_SCALE As Double = 0.66
 
-    ' ==== Ban do (0 = trong, 1 = tuong da, 2 = tuong da tim) ====
+    ' ==== Ban do (0 = trong, 1 = tuong da, 2 = tuong da tim, 3 = kien hang thap [nhay qua], 4 = khe chui [ngoi qua]) ====
     Private Const MAP_W As Integer = 16
     Private Const MAP_H As Integer = 16
     Private ReadOnly mapData As Integer(,) = {
         {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-        {1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+        {1, 0, 0, 0, 0, 0, 1, 0, 3, 0, 0, 4, 0, 0, 0, 1},
         {1, 0, 2, 2, 0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1},
         {1, 0, 2, 2, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1},
         {1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 2, 0, 1, 0, 0, 1},
@@ -63,11 +63,17 @@ Public Class Form1
     Private isJumping As Boolean = False
     Private crouchAmount As Double = 0.0   ' 0 = dung thang, 1 = ngoi het co (noi suy muot)
     Private viewShiftPx As Integer = 0     ' offset man hinh theo chieu doc, tinh lai moi frame
+    Private jumpRequested As Boolean = False ' bat len khi bam chuot phai, tieu thu trong HandleInput
     Private Const GRAVITY As Double = 9.0
     Private Const JUMP_SPEED As Double = 3.2
     Private Const CROUCH_LERP_SPEED As Double = 7.0
     Private Const CROUCH_MAX_HEIGHT As Double = 0.35
     Private Const VIEW_SHIFT_SCALE As Double = 70.0
+    Private Const CRATE_JUMP_HEIGHT As Double = 0.45   ' phai nhay cao hon muc nay moi vuot qua duoc kien hang (loai 3)
+    Private Const CROUCH_PASS_THRESHOLD As Double = 0.6 ' phai ngoi it nhat muc nay moi chui qua duoc khe (loai 4)
+
+    ' ==== Dung cu / vu khi cam tren tay (chuot trai) - danh cho nang cap sau ====
+    Private heldItemName As String = "(chua trang bi)"
 
     ' ==== Trang thai game ====
     Private mushrooms As New List(Of PointF)
@@ -99,6 +105,7 @@ Public Class Form1
 
         AddHandler Me.KeyDown, AddressOf Form1_KeyDown
         AddHandler Me.KeyUp, AddressOf Form1_KeyUp
+        AddHandler Me.MouseDown, AddressOf Form1_MouseDown
         AddHandler Me.Paint, AddressOf Form1_Paint
 
         SpawnMushrooms(20)
@@ -114,6 +121,20 @@ Public Class Form1
 
     Private Sub Form1_KeyUp(sender As Object, e As KeyEventArgs)
         pressedKeys.Remove(e.KeyCode)
+    End Sub
+
+    Private Sub Form1_MouseDown(sender As Object, e As MouseEventArgs)
+        If e.Button = MouseButtons.Right Then
+            jumpRequested = True
+        ElseIf e.Button = MouseButtons.Left Then
+            UseHeldItem()
+        End If
+    End Sub
+
+    ' Cho nang cap sau: goc de xu ly danh/ban khi da co item/vu khi trang bi ben chuot trai.
+    ' Vi du: neu heldItemName = "Kiem" thi phat animation chem + kiem tra va cham voi doi thu (PvP).
+    Private Sub UseHeldItem()
+        ' Hien tai chua trang bi gi nen khong lam gi ca.
     End Sub
 
     Protected Overrides Sub OnShown(e As EventArgs)
@@ -164,11 +185,12 @@ Public Class Form1
             crouchAmount = Math.Max(crouchTarget, crouchAmount - CROUCH_LERP_SPEED * dt)
         End If
 
-        ' ---- Nhay (Space), khong the nhay khi dang ngoi ----
-        If pressedKeys.Contains(Keys.Space) AndAlso Not isJumping AndAlso crouchAmount < 0.5 Then
+        ' ---- Nhay (chuot phai), khong the nhay khi dang ngoi ----
+        If jumpRequested AndAlso Not isJumping AndAlso crouchAmount < 0.5 Then
             isJumping = True
             zVelocity = JUMP_SPEED
         End If
+        jumpRequested = False
         If isJumping Then
             playerZ += zVelocity * dt
             zVelocity -= GRAVITY * dt
@@ -214,7 +236,17 @@ Public Class Form1
         Dim mx As Integer = CInt(Math.Floor(x))
         Dim my As Integer = CInt(Math.Floor(y))
         If mx < 0 OrElse mx >= MAP_W OrElse my < 0 OrElse my >= MAP_H Then Return False
-        Return mapData(my, mx) = 0
+        Dim cellType As Integer = mapData(my, mx)
+        Select Case cellType
+            Case 0
+                Return True
+            Case 3 ' kien hang thap: chi qua duoc khi dang nhay du cao
+                Return playerZ >= CRATE_JUMP_HEIGHT
+            Case 4 ' khe chui: chi qua duoc khi dang ngoi du thap
+                Return crouchAmount >= CROUCH_PASS_THRESHOLD
+            Case Else ' tuong da (1, 2) luon chan
+                Return False
+        End Select
     End Function
 
     Private Sub CheckPickup()
@@ -289,6 +321,8 @@ Public Class Form1
             Dim hit As Boolean = False
             Dim side As Integer = 0
             Dim safety As Integer = 0
+            Dim obstacleType As Integer = 0
+            Dim obstacleDist As Double = 0.0
             While Not hit AndAlso safety < 64
                 safety += 1
                 If sideDistX < sideDistY Then
@@ -298,8 +332,27 @@ Public Class Form1
                 End If
                 If mapX < 0 OrElse mapX >= MAP_W OrElse mapY < 0 OrElse mapY >= MAP_H Then
                     hit = True
-                ElseIf mapData(mapY, mapX) > 0 Then
-                    hit = True
+                Else
+                    Dim cellType As Integer = mapData(mapY, mapX)
+                    If cellType = 1 OrElse cellType = 2 Then
+                        hit = True
+                    ElseIf cellType = 3 OrElse cellType = 4 Then
+                        Dim passable As Boolean = If(cellType = 3, playerZ >= CRATE_JUMP_HEIGHT, crouchAmount >= CROUCH_PASS_THRESHOLD)
+                        If passable Then
+                            ' Nguoi choi du kien nhay/ngoi qua duoc: khong chan tia, nhung ghi lai
+                            ' vi tri de sau do ve khoi nua-chieu-cao dung cho o nay.
+                            If obstacleType = 0 Then
+                                obstacleType = cellType
+                                If side = 0 Then
+                                    obstacleDist = (mapX - playerX + (1 - stepX) / 2.0) / If(rayDirX = 0, 0.000000001, rayDirX)
+                                Else
+                                    obstacleDist = (mapY - playerY + (1 - stepY) / 2.0) / If(rayDirY = 0, 0.000000001, rayDirY)
+                                End If
+                            End If
+                        Else
+                            hit = True
+                        End If
+                    End If
                 End If
             End While
 
@@ -310,7 +363,7 @@ Public Class Form1
                 perpWallDist = (mapY - playerY + (1 - stepY) / 2.0) / If(rayDirY = 0, 0.000000001, rayDirY)
             End If
             If perpWallDist < 0.05 Then perpWallDist = 0.05
-            zBuffer(x) = perpWallDist
+            zBuffer(x) = If(obstacleType <> 0, Math.Min(perpWallDist, obstacleDist), perpWallDist)
 
             Dim lineHeight As Integer = CInt(RES_H / perpWallDist)
             Dim drawStart As Integer = Math.Max(0, -lineHeight \ 2 + RES_H \ 2 + viewShiftPx)
@@ -326,6 +379,10 @@ Public Class Form1
             Select Case wallType
                 Case 2
                     baseR = 120 : baseG = 70 : baseB = 160
+                Case 3
+                    baseR = 180 : baseG = 120 : baseB = 60
+                Case 4
+                    baseR = 90 : baseG = 150 : baseB = 170
                 Case Else
                     baseR = 150 : baseG = 100 : baseB = 60
             End Select
@@ -339,6 +396,32 @@ Public Class Form1
             For y As Integer = drawStart To drawEnd
                 pixelBuf(y * RES_W + x) = col
             Next
+
+            ' Ve khoi nua-chieu-cao (kien hang / khe chui) ma tia da "nhin xuyen qua" o tren
+            If obstacleType <> 0 Then
+                Dim obsLineHeight As Integer = CInt(RES_H / Math.Max(0.05, obstacleDist))
+                Dim obsTop As Integer = -obsLineHeight \ 2 + RES_H \ 2 + viewShiftPx
+                Dim obsBot As Integer = obsLineHeight \ 2 + RES_H \ 2 + viewShiftPx
+                Dim obsMid As Integer = (obsTop + obsBot) \ 2
+
+                Dim slabStart As Integer, slabEnd As Integer
+                Dim obsR As Integer, obsG As Integer, obsB As Integer
+                If obstacleType = 3 Then
+                    slabStart = obsMid : slabEnd = obsBot           ' kien hang: chiem nua duoi
+                    obsR = 180 : obsG = 120 : obsB = 60
+                Else
+                    slabStart = obsTop : slabEnd = obsMid            ' khe chui: chiem nua tren
+                    obsR = 90 : obsG = 150 : obsB = 170
+                End If
+                slabStart = Math.Max(0, slabStart)
+                slabEnd = Math.Min(RES_H - 1, slabEnd)
+
+                Dim obsFog As Double = Math.Max(0.25, 1.0 - obstacleDist / 12.0)
+                Dim obsCol As Integer = ToArgb(CInt(obsR * obsFog), CInt(obsG * obsFog), CInt(obsB * obsFog))
+                For y As Integer = slabStart To slabEnd
+                    pixelBuf(y * RES_W + x) = obsCol
+                Next
+            End If
         Next
 
         DrawMushroomSprites(dirX, dirY, planeX, planeY)
@@ -433,10 +516,10 @@ Public Class Form1
         Using f As New Font("Consolas", 12, FontStyle.Bold)
             Using brush As New SolidBrush(Color.White)
                 Using shadow As New SolidBrush(Color.Black)
-                    Dim hudText As String = String.Format("Diem: {0}    Cap do: {1}    Toc do: x{2:0.00}    Nam con lai: {3}", score, level, speedMultiplier, mushrooms.Count)
+                    Dim hudText As String = String.Format("Diem: {0}    Cap do: {1}    Toc do: x{2:0.00}    Nam con lai: {3}    Dung cu: {4}", score, level, speedMultiplier, mushrooms.Count, heldItemName)
                     g.DrawString(hudText, f, shadow, 11, 11)
                     g.DrawString(hudText, f, brush, 10, 10)
-                    Dim hint As String = "WASD: di chuyen | Left/Right: xoay | Space: nhay | Ctrl/C: ngoi | ESC: thoat"
+                    Dim hint As String = "WASD: di chuyen | Left/Right: xoay | Chuot phai: nhay | Ctrl/C: ngoi | Chuot trai: dung cu | ESC: thoat"
                     g.DrawString(hint, f, shadow, 11, WIN_H - 29)
                     g.DrawString(hint, f, brush, 10, WIN_H - 30)
                 End Using
@@ -456,7 +539,17 @@ Public Class Form1
         For y As Integer = 0 To MAP_H - 1
             For x As Integer = 0 To MAP_W - 1
                 If mapData(y, x) > 0 Then
-                    Dim col As Color = If(mapData(y, x) = 2, Color.MediumPurple, Color.Gray)
+                    Dim col As Color
+                    Select Case mapData(y, x)
+                        Case 2
+                            col = Color.MediumPurple
+                        Case 3
+                            col = Color.SandyBrown
+                        Case 4
+                            col = Color.LightSkyBlue
+                        Case Else
+                            col = Color.Gray
+                    End Select
                     Using b As New SolidBrush(col)
                         g.FillRectangle(b, ox + x * cell, oy + y * cell, cell - 1, cell - 1)
                     End Using
