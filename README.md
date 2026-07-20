@@ -1,5 +1,10 @@
 # GamePvP3D_HaiNam (Bản test single-player)
 
+<p align="center">
+  <img src="GameHaiNam-logo.png" width="800">
+</p>
+
+
 Game phiêu lưu 3D góc nhìn thứ nhất kiểu raycasting (giống Wolfenstein 3D
 đời đầu), nhân vật đi trong mê cung và nhặt nấm để lên điểm, đủ số lượng thì
 lên cấp và được buff tốc độ. Toàn bộ phần render là GDI+ thuần (không dùng
