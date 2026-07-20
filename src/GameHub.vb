@@ -80,6 +80,19 @@ Partial Public Class Form1
                     ApplyItemPickup(reqSlot, wid)
                 End If
             End If
+        ElseIf line.StartsWith("ITEMDROPREQ|") Then
+            Dim parts() As String = line.Split("|"c)
+            If parts.Length = 5 Then
+                Dim dropItemId As String = parts(2)
+                Dim dx As Double, dy As Double
+                If itemCatalog.ContainsKey(dropItemId) AndAlso
+                   Double.TryParse(parts(3), NumberStyles.Float, CultureInfo.InvariantCulture, dx) AndAlso
+                   Double.TryParse(parts(4), NumberStyles.Float, CultureInfo.InvariantCulture, dy) Then
+                    worldItems.Add(New WorldItemSpawn() With {.Id = nextWorldItemId, .Pos = New PointF(CSng(dx), CSng(dy)), .ItemId = dropItemId})
+                    nextWorldItemId += 1
+                    hub.Broadcast(BuildItemSyncLine("ITEMSYNC"))
+                End If
+            End If
         ElseIf line.StartsWith("ATKREQ|") Then
             Dim parts() As String = line.Split("|"c)
             If parts.Length = 4 Then
@@ -130,7 +143,18 @@ Partial Public Class Form1
         If line.StartsWith("WELCOME|") Then
             Dim parts() As String = line.Split("|"c)
             If parts.Length >= 2 Then Integer.TryParse(parts(1), localSlot)
-            mushrooms = ParseMushroomList(parts, 2)
+
+            ' Map that su cua Host - neu khac voi map tam (placeholder) dang dung cuc bo
+            ' thi chuyen sang ngay (gan lai mapData/torchLights/vi tri spawn cua minh + tinh
+            ' lai trang tri). Client KHONG duoc tu chon map khac Host trong PvP.
+            If parts.Length >= 3 Then
+                Dim hostMapIdx As Integer
+                If Integer.TryParse(parts(2), hostMapIdx) AndAlso hostMapIdx <> currentMapIndex Then
+                    ApplyMapSelection(hostMapIdx)
+                End If
+            End If
+
+            mushrooms = ParseMushroomList(parts, 3)
             pendingPickupRequests.Clear()
             netStatusText = "Da vao phong, ban la nguoi choi #" & localSlot
         ElseIf line.StartsWith("MSYNC") Then
@@ -227,8 +251,10 @@ Partial Public Class Form1
         Return sb.ToString()
     End Function
 
+    ' Them currentMapIndex ngay sau slotIndex de Client biet CHINH XAC dang choi map
+    ' nao cua Host (Client khong tu quyet map duoc trong PvP, xem Peer_LineReceived).
     Private Function BuildWelcomeLine(slotIndex As Integer) As String
-        Return BuildMushroomSyncLine("WELCOME|" & slotIndex)
+        Return BuildMushroomSyncLine("WELCOME|" & slotIndex & "|" & currentMapIndex)
     End Function
 
     Private Function ParseMushroomList(parts() As String, startIndex As Integer) As List(Of MushroomItem)

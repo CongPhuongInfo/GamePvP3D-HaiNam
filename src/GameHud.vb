@@ -120,16 +120,10 @@ Partial Public Class Form1
             End Select
         End If
 
-        ' Do nam tay (0 = mo het, 1 = nam chat): dung yen thi "tho" nhe qua lai,
-        ' dang chay thi nam chac hon voi nhip theo buoc chan, dang cam do thi luon nam chat.
-        Dim gripAmount As Double
-        If isHolding Then
-            gripAmount = 1.0
-        ElseIf bobAmount > 0.05 Then
-            gripAmount = 0.55 + 0.12 * Math.Sin(bobPhase * 1.2) * bobAmount
-        Else
-            gripAmount = 0.30 + 0.08 * Math.Sin(idlePhase * 0.3)
-        End If
+        ' Do nam tay (0 = mo het, 1 = nam chat): tay trong (khong cam do) giu co dinh,
+        ' khong con dao dong/doi anh nua du dung yen hay dang di - tranh roi mat.
+        ' Chi khi cam do (isHolding) moi nam chat het co.
+        Dim gripAmount As Double = If(isHolding, 1.0, 0.30)
         gripAmount = Math.Max(0.0, Math.Min(1.0, gripAmount))
 
         ' Khi dang cam do, 2 tay khep lai gan giua man hinh hon (nhu dang giu chung 1 vat)
@@ -141,6 +135,13 @@ Partial Public Class Form1
         Dim swingPunch As Single = CSng(Math.Sin(swingT * Math.PI))
         Dim swingRise As Single = swingPunch * 70.0F
         Dim swingForward As Single = swingPunch * 45.0F
+
+        ' Hoat anh hai nam: tay phai cui/vuon xuong-vao roi tu tro ve, 0 -> 1 -> 0 trong suot
+        ' PICKUP_ANIM_DURATION (nguoc huong voi vung vu khi o tren: xuong thay vi len).
+        Dim pickupT As Double = If(pickupAnimTime > 0.0, 1.0 - pickupAnimTime / PICKUP_ANIM_DURATION, 0.0)
+        Dim pickupPunch As Single = CSng(Math.Sin(pickupT * Math.PI))
+        Dim pickupDip As Single = pickupPunch * 55.0F     ' tay ha xuong bao nhieu px
+        Dim pickupIn As Single = pickupPunch * 30.0F      ' tay khep vao giua bao nhieu px
 
         ' Dang giu chuot trai keo cung: 2 tay nang len cao hon (tu the ngam ban), va tay
         ' phai (tay keo day) lui dan ra xa hon theo thoi gian giu, mo phong keo day cung
@@ -155,9 +156,9 @@ Partial Public Class Form1
 
         Dim baseY As Single = WIN_H + 20 + crouchDrop - jumpRise - swingRise - aimRise
         Dim leftX As Single = CSng(WIN_W * handSpread) + bobX + swingForward
-        Dim rightX As Single = CSng(WIN_W * (1.0 - handSpread)) - bobX - swingForward + pullBack
+        Dim rightX As Single = CSng(WIN_W * (1.0 - handSpread)) - bobX - swingForward + pullBack - pickupIn
         Dim leftY As Single = baseY + bobY
-        Dim rightY As Single = baseY - bobY - CSng(bowDrawT * 15.0) ' tay keo day nhich len gan ma hon
+        Dim rightY As Single = baseY - bobY - CSng(bowDrawT * 15.0) + pickupDip ' tay keo day nhich len gan ma hon
 
         If handOpenImgBySlot(handSlot) IsNot Nothing OrElse handFistImgBySlot(handSlot) IsNot Nothing OrElse handHoldingImgBySlot(handSlot) IsNot Nothing Then
             DrawHandTextured(g, leftX, leftY, True, handSlot, gripAmount, isHolding, overrideHoldingImg:=leftOverrideImg)
@@ -351,7 +352,8 @@ Partial Public Class Form1
             Using brush As New SolidBrush(Color.White)
                 Using shadow As New SolidBrush(Color.Black)
                     Dim hpText As String = If(playerHealth <= 0, "DA GUC - dang hoi sinh...", "Mau: " & playerHealth & "/" & PLAYER_MAX_HEALTH)
-                    Dim hudText As String = String.Format("{0}    Diem: {1}    Cap do: {2}    Toc do: x{3:0.00}    Nam con lai: {4}    Vat pham: {5}    Dung cu: {6}", hpText, score, level, speedMultiplier, mushrooms.Count, worldItems.Count, heldItemName)
+                    Dim mapName As String = If(currentMapIndex >= 0 AndAlso currentMapIndex < MapNames.Length, MapNames(currentMapIndex), "?")
+                    Dim hudText As String = String.Format("[{0}]    {1}    Diem: {2}    Cap do: {3}    Toc do: x{4:0.00}    Nam con lai: {5}    Vat pham: {6}    Dung cu: {7}", mapName, hpText, score, level, speedMultiplier, mushrooms.Count, worldItems.Count, heldItemName)
                     g.DrawString(hudText, f, shadow, 11, 11)
                     g.DrawString(hudText, f, brush, 10, 10)
                     Dim hint As String = "Di chuot: xoay | WASD: di chuyen | Chuot phai: nhay | Ctrl/C: ngoi | 1-5: doi do | ESC: thoat"
@@ -392,7 +394,7 @@ Partial Public Class Form1
     End Sub
 
     Private Sub DrawMinimap(g As Graphics)
-        Dim cell As Integer = 10
+        Dim cell As Integer = If(MAP_W > 16, 6, 10)
         Dim ox As Integer = WIN_W - MAP_W * cell - 14
         Dim oy As Integer = 14
 

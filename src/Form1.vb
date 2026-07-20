@@ -29,41 +29,70 @@ Public Class Form1
     Private Const WIN_H As Integer = 600
     Private Const FOV_SCALE As Double = 0.66
 
-    ' ==== Ban do (0 = trong, 1 = tuong da, 2 = tuong da tim, 3 = kien hang thap [nhay qua], 4 = khe chui [ngoi qua]) ====
-    Private Const MAP_W As Integer = 16
-    Private Const MAP_H As Integer = 16
-    Private ReadOnly mapData As Integer(,) = {
-        {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-        {1, 0, 0, 0, 0, 0, 1, 0, 3, 0, 0, 4, 0, 0, 0, 1},
-        {1, 0, 2, 2, 0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1},
-        {1, 0, 2, 2, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1},
-        {1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 2, 0, 1, 0, 0, 1},
-        {1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 2, 0, 1, 0, 0, 1},
-        {1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1},
-        {1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1},
-        {1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
-        {1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1},
-        {1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1},
-        {1, 1, 1, 0, 1, 0, 1, 0, 2, 2, 2, 0, 0, 1, 0, 1},
-        {1, 0, 0, 0, 0, 0, 1, 0, 2, 2, 2, 0, 0, 1, 0, 1},
-        {1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1},
-        {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
-        {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
-    }
+    ' ==== Ban do (0 = dat trong, 1 = tuong da [con lai rat it, chi lam moc ranh gioi cu],
+    '      2 = tuong da tim, 3 = khuc go do [nhay qua], 4 = khe da [ngoi qua],
+    '      5 = mo dat/re cay thap [di len duoc], 6 = tang da cao [di len duoc],
+    '      7 = CAY (than cay doc lap, di vong quanh duoc, la loai chinh cua rung)).
+    '  Ban than du lieu map (nhieu lua chon) nam trong GameMaps.vb - MAP_W/H GIONG
+    '  NHAU cho tat ca map (16x16) de don gian hoa, chi noi dung o ben trong khac
+    '  nhau. mapData/torchLights KHONG con la ReadOnly vi duoc gan lai luc chon map
+    '  (ApplyMapSelection trong GameMaps.vb), ke ca gan lai lan 2 luc Client nhan
+    '  duoc WELCOME tu Host bao map thuc su dang choi (xem Peer_LineReceived). ====
+    Private Const MAP_W As Integer = 32
+    Private Const MAP_H As Integer = 32
+    Private mapData As Integer(,)
+    Private currentMapIndex As Integer = 0
+    Private mapFogDist As Double = 12.0 ' tam nhin truoc khi mo suong day dac - moi map tu dat rieng, xem MapDefinition.FogDistance
+
+    ' ==== Buc/bac cao do di duoc (khong can nhay, camera tu noi len khi buoc vao) ====
+    Private Const PLATFORM_LOW_HEIGHT As Double = 0.35   ' do cao buc thap (loai o 5), don vi = 1 buc tuong day
+    Private Const PLATFORM_HIGH_HEIGHT As Double = 0.7   ' do cao buc cao (loai o 6)
+    Private Const STAND_HEIGHT_LERP_SPEED As Double = 3.0 ' toc do noi suy camera khi buoc len/xuong buc
 
     ' ==== Nguoi choi ====
     Private playerX As Double = 1.5
     Private playerY As Double = 1.5
     Private playerAngle As Double = 0.3
     Private moveSpeed As Double = 2.6
-    Private rotSpeed As Double = 2.2
+    Private rotSpeed As Double = 2.2 ' KHONG con dung nua - Left/Right da doi thanh di ngang (strafe) trong GameInput.vb, xoay camera gio chi con bang chuot. Giu lai phong khi can dung lai.
     Private speedMultiplier As Double = 1.0
 
-    ' ==== Xoay bang chuot (mouse-look) ====
+    ' ==== Den duoc / diem sang (torch light) ====
+    Private Structure TorchLight
+        Public X As Double
+        Public Y As Double
+        Public Radius As Double       ' ban kinh chieu sang toi da, don vi = 1 o ban do
+        Public FlickerSeed As Double  ' lech pha rieng de cac den khong nhap nhay dong bo voi nhau
+    End Structure
+    ' Du lieu thuc te (toa do theo tung map) nam trong GameMaps.vb, gan qua ApplyMapSelection.
+    Private torchLights As TorchLight()
+    Private Const TORCH_BRIGHTNESS As Double = 0.65 ' do sang toi da den cong them vao fog nen
+
+    ' ==== Fog pha mau (blend ve mau suong toi thay vi chi lam toi don thuan) ====
+    Private Const FOG_COLOR_R As Integer = 150 ' suong rung ban ngay - xanh xam nhat thay vi den xanh dem
+    Private Const FOG_COLOR_G As Integer = 175
+    Private Const FOG_COLOR_B As Integer = 150
+
+    ' ==== Vignette (toi nhe 4 goc man hinh, tang chieu sau/cam giac ong kinh) ====
+    Private Const VIGNETTE_START As Double = 0.55  ' ban kinh (0..1 tinh tu giua man hinh) bat dau toi dan
+    Private Const VIGNETTE_STRENGTH As Double = 0.55 ' do toi toi da o 4 goc (0 = khong toi, 1 = den han)
+
+    ' ==== Bong do gia duoi chan sprite ====
+    Private Const SHADOW_MAX_DIST As Double = 14.0 ' qua khoang cach nay thi khong ve bong (da bi fog che)
     Private Const MOUSE_SENSITIVITY As Double = 0.0035
     Private mouseLookEnabled As Boolean = False
     Private ignoreNextMouseMove As Boolean = False
     Private cursorCaptured As Boolean = False
+
+    ' ==== Ngua/cui bang chuot (mouse pitch look) ====
+    ' Ky thuat "horizon shift" don gian (dich toan bo man hinh len/xuong theo pixel),
+    ' khong phai true 3D pitch that su (raycaster nay chi co tia ngang, khong nghieng
+    ' tia theo chieu doc) - du de tao cam giac ngua/cui trong pham vi vua phai, gioi han
+    ' boi PITCH_MAX_PX de tranh meo hinh qua nang o goc gan +-90 do.
+    Private pitchShiftPx As Integer = 0
+    Private Const MOUSE_PITCH_SENSITIVITY As Double = 0.6
+    Private Const PITCH_MAX_PX As Integer = 70
+    Private Const INVERT_MOUSE_PITCH As Boolean = False ' True neu muon dao chieu (keo chuot len = cui xuong)
 
     ' ==== Hoat anh nhun tay khi di bo (view model kieu FPS) ====
     Private bobPhase As Double = 0.0
@@ -72,12 +101,14 @@ Public Class Form1
     Private Const BOB_LERP_SPEED As Double = 6.0
     Private idlePhase As Double = 0.0   ' nhip "tho" cham cua tay khi dung yen (mo/nam nhe tu nhien)
     Private Const IDLE_BREATH_SPEED As Double = 1.3
+    Private worldTime As Double = 0.0   ' thoi gian troi qua tu luc mo game (giay), dung cho nhap nhay den/hieu ung theo thoi gian
 
     ' ==== Nhay / ngoi (mo phong bang do lech camera theo chieu doc) ====
-    Private playerZ As Double = 0.0        ' do cao hien tai khi nhay, 0 = duoi dat
+    Private playerZ As Double = 0.0        ' do cao hien tai khi nhay, 0 = duoi dat (tinh tu mat buc dang dung)
     Private zVelocity As Double = 0.0
     Private isJumping As Boolean = False
     Private crouchAmount As Double = 0.0   ' 0 = dung thang, 1 = ngoi het co (noi suy muot)
+    Private standHeight As Double = 0.0    ' do cao cua buc/nen dang dung (noi suy muot khi buoc len/xuong buc 5,6)
     Private viewShiftPx As Integer = 0     ' offset man hinh theo chieu doc, tinh lai moi frame
     Private jumpRequested As Boolean = False ' bat len khi bam chuot phai, tieu thu trong HandleInput
     Private Const GRAVITY As Double = 9.0
@@ -97,10 +128,12 @@ Public Class Form1
     Private lastAttackTime As DateTime = DateTime.MinValue
     Private lastDamageTakenTime As DateTime = DateTime.MinValue ' cho hieu ung do man hinh khi bi trung don
     Private attackSwingTime As Double = 0.0   ' > 0 = dang trong hoat anh vung/ban, dem nguoc ve 0
+    Private pickupAnimTime As Double = 0.0    ' > 0 = dang trong hoat anh tay hai nam, dem nguoc ve 0
     Private isDrawingBow As Boolean = False       ' dang giu chuot trai keo cung (chua ban)
     Private drawStartTime As DateTime = DateTime.MinValue
     Private drawingItem As ItemDefinition = Nothing ' item cung dang duoc keo, phong khi doi tay giua chung
     Private Const ATTACK_SWING_DURATION As Double = 0.22
+    Private Const PICKUP_ANIM_DURATION As Double = 0.35 ' hoi lau hon vung vu khi vi la dong tac cui/vuon xuong
     Private Const MELEE_HIT_CONE_RAD As Double = 0.9   ' ~51 do moi ben tinh tu huong nhin, du rong de de trung
     Private Const ARROW_HIT_RADIUS As Double = 0.35
     Private Const ARROW_LIFE_SECONDS As Double = 3.0
@@ -160,6 +193,14 @@ Public Class Form1
     Private texVent() As Integer
     Private texFloor() As Integer
     Private texMushroom() As Integer
+    Private texTreeBark() As Integer ' KHONG nap tu file - tu sinh bang code (xem GenerateForestTextures trong GameRender.vb)
+    Private texBushWall() As Integer ' Bui co ram - vien ban do "Canh Dong Rong" (loai o 8), xem GenerateForestTextures
+    Private texCliffWall() As Integer ' Vach da - loai o 9
+    Private texCreviceWall() As Integer ' Khe nut dat - loai o 10
+    Private texRiverbankWall() As Integer ' Bo suoi - loai o 11
+    Private texTree() As Integer = Nothing ' Anh that Assets\Forest\tree_billboard.png (tuy chon) - Nothing = dung TreePixel ve bang cong thuc
+    Private texTreeW As Integer = 0
+    Private texTreeH As Integer = 0
 
     ' Anh mui ten bay (Assets\Items\arrow.png) - anh goc VE NGANG (dau nhon ben phai,
     ' long vu ben trai) nhung billboard bay ve THEO TRUC DOC (dau nhon o tren) cho dung
@@ -305,7 +346,12 @@ Public Class Form1
     Private weaponIconPixelsDagger As Integer(), weaponIconWDagger As Integer, weaponIconHDagger As Integer
     Private weaponIconPixelsSword As Integer(), weaponIconWSword As Integer, weaponIconHSword As Integer
 
-    Public Sub New(modeArg As String, ipArg As String, portArg As Integer)
+    ' mapIndexArg: map do nguoi choi chon o ConnectForm truoc khi bat dau (xem GameMaps.vb
+    ' de biet danh sach map). Voi che do Join, day chi la GIA TRI TAM (placeholder) de co
+    ' gi do de ve ngay khi cua so hien len - ApplyMapSelection() se duoc goi LAI voi map
+    ' THAT SU cua Host ngay khi nhan duoc WELCOME (xem Peer_LineReceived trong GameHub.vb),
+    ' vi trong PvP ca phong BAT BUOC phai dung chung 1 map, Client khong tu quyet duoc.
+    Public Sub New(modeArg As String, ipArg As String, portArg As Integer, mapIndexArg As Integer)
         Me.Text = "GamePvP 3D - Phieu Luu Hai Nam (Test Build)"
         Me.ClientSize = New Size(WIN_W, WIN_H)
         Me.FormBorderStyle = FormBorderStyle.FixedSingle
@@ -315,6 +361,7 @@ Public Class Form1
 
         frameBmp = New Bitmap(RES_W, RES_H, PixelFormat.Format32bppRgb)
         LoadTextures()
+        GenerateForestTextures() ' sinh texture vo cay + ghi de san co bang cong thuc, khong can file anh
         LoadHandTextures()
         LoadWeaponIconPixels()
         LoadCharacterTexture()
@@ -333,8 +380,8 @@ Public Class Form1
 
         InitItemCatalog()
         InitInventory()
+        ApplyMapSelection(mapIndexArg) ' gan mapData/torchLights/vi tri spawn + tu goi SpawnDecorations()
         SpawnMushrooms(20)
-        SpawnDecorations()
         SpawnWorldItems(8)
 
         lastTick = DateTime.Now
@@ -358,7 +405,7 @@ Module MainModule
 
         Using connectForm As New ConnectForm()
             If connectForm.ShowDialog() = DialogResult.OK Then
-                Application.Run(New Form1(connectForm.ResultMode, connectForm.ResultIp, connectForm.ResultPort))
+                Application.Run(New Form1(connectForm.ResultMode, connectForm.ResultIp, connectForm.ResultPort, connectForm.ResultMapIndex))
             End If
         End Using
     End Sub

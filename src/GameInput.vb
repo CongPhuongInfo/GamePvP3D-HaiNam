@@ -24,6 +24,7 @@ Partial Public Class Form1
             Case Keys.D3, Keys.NumPad3 : EquipSlot(2)
             Case Keys.D4, Keys.NumPad4 : EquipSlot(3)
             Case Keys.D5, Keys.NumPad5 : EquipSlot(4)
+            Case Keys.Delete : DropHeldItem()
         End Select
     End Sub
 
@@ -131,11 +132,19 @@ Partial Public Class Form1
             Return
         End If
         Dim centerX As Integer = Me.ClientSize.Width \ 2
+        Dim centerY As Integer = Me.ClientSize.Height \ 2
         Dim dx As Integer = e.X - centerX
+        Dim dy As Integer = e.Y - centerY
         If dx <> 0 Then
             playerAngle += dx * MOUSE_SENSITIVITY
-            CenterCursor()
         End If
+        If dy <> 0 Then
+            ' dy < 0 (chuot len) -> ngua len -> pitchShiftPx tang (thay them tran/tren)
+            Dim pitchSign As Integer = If(INVERT_MOUSE_PITCH, -1, 1)
+            pitchShiftPx -= CInt(dy * MOUSE_PITCH_SENSITIVITY) * pitchSign
+            pitchShiftPx = Math.Max(-PITCH_MAX_PX, Math.Min(PITCH_MAX_PX, pitchShiftPx))
+        End If
+        If dx <> 0 OrElse dy <> 0 Then CenterCursor()
     End Sub
 
     ' Cho nang cap sau: goc de xu ly danh/ban khi da co item/vu khi trang bi ben chuot trai.
@@ -171,17 +180,19 @@ Partial Public Class Form1
             End If
         End If
 
-        ' Camera offset man hinh: nhay len -> the gioi lech xuong, ngoi -> the gioi lech len
-        viewShiftPx = CInt((playerZ - crouchAmount * CROUCH_MAX_HEIGHT) * VIEW_SHIFT_SCALE)
+        ' Ghi chu: viewShiftPx (offset man hinh do nhay/ngoi/buc/chuot ngua-cui) duoc tinh
+        ' 1 lan duy nhat o cuoi ham nay, sau khi da biet standHeight cua o vua di toi.
 
         ' Di chuyen cham hon khi dang ngoi
         Dim crouchSpeedFactor As Double = 1.0 - crouchAmount * 0.5
         Dim moveStep As Double = moveSpeed * speedMultiplier * crouchSpeedFactor * dt
 
+
         ' ---- Hoat anh nhun tay khi di bo ----
         Dim isMoving As Boolean = pressedKeys.Contains(Keys.W) OrElse pressedKeys.Contains(Keys.Up) OrElse
                                    pressedKeys.Contains(Keys.S) OrElse pressedKeys.Contains(Keys.Down) OrElse
-                                   pressedKeys.Contains(Keys.A) OrElse pressedKeys.Contains(Keys.D)
+                                   pressedKeys.Contains(Keys.A) OrElse pressedKeys.Contains(Keys.D) OrElse
+                                   pressedKeys.Contains(Keys.Left) OrElse pressedKeys.Contains(Keys.Right)
         Dim bobTarget As Double = If(isMoving AndAlso Not isJumping, 1.0, 0.0)
         If bobAmount < bobTarget Then
             bobAmount = Math.Min(bobTarget, bobAmount + BOB_LERP_SPEED * dt)
@@ -190,9 +201,7 @@ Partial Public Class Form1
         End If
         If isMoving Then bobPhase += BOB_SPEED * dt * crouchSpeedFactor
         idlePhase += IDLE_BREATH_SPEED * dt
-
-        If pressedKeys.Contains(Keys.Left) Then playerAngle -= rotSpeed * dt
-        If pressedKeys.Contains(Keys.Right) Then playerAngle += rotSpeed * dt
+        worldTime += dt
 
         Dim newX As Double = playerX
         Dim newY As Double = playerY
@@ -203,16 +212,34 @@ Partial Public Class Form1
         If pressedKeys.Contains(Keys.S) OrElse pressedKeys.Contains(Keys.Down) Then
             newX -= dirX * moveStep : newY -= dirY * moveStep
         End If
-        If pressedKeys.Contains(Keys.A) Then
+        If pressedKeys.Contains(Keys.A) OrElse pressedKeys.Contains(Keys.Left) Then
             newX += dirY * moveStep : newY -= dirX * moveStep
         End If
-        If pressedKeys.Contains(Keys.D) Then
+        If pressedKeys.Contains(Keys.D) OrElse pressedKeys.Contains(Keys.Right) Then
             newX -= dirY * moveStep : newY += dirX * moveStep
         End If
 
         ' Va cham truot theo tung truc rieng de co the luot doc tuong
         If IsWalkable(newX, playerY) Then playerX = newX
         If IsWalkable(playerX, newY) Then playerY = newY
+
+        ' ---- Buc/bac cao (loai o 5, 6): noi suy muot chieu cao nen theo o dang dung ----
+        Dim standMx As Integer = CInt(Math.Floor(playerX))
+        Dim standMy As Integer = CInt(Math.Floor(playerY))
+        Dim standCellType As Integer = 0
+        If standMx >= 0 AndAlso standMx < MAP_W AndAlso standMy >= 0 AndAlso standMy < MAP_H Then
+            standCellType = mapData(standMy, standMx)
+        End If
+        Dim targetStandHeight As Double = CellFloorHeight(standCellType)
+        If standHeight < targetStandHeight Then
+            standHeight = Math.Min(targetStandHeight, standHeight + STAND_HEIGHT_LERP_SPEED * dt)
+        Else
+            standHeight = Math.Max(targetStandHeight, standHeight - STAND_HEIGHT_LERP_SPEED * dt)
+        End If
+
+        ' Cong them do cao buc vao offset camera (da tinh o tren, truoc khi biet o dung moi -
+        ' cap nhat lai viewShiftPx voi standHeight moi nhat de khong bi cham 1 frame)
+        viewShiftPx = CInt((playerZ + standHeight - crouchAmount * CROUCH_MAX_HEIGHT) * VIEW_SHIFT_SCALE) + pitchShiftPx
     End Sub
 
     Private Function IsWalkable(x As Double, y As Double) As Boolean
@@ -221,7 +248,7 @@ Partial Public Class Form1
         If mx < 0 OrElse mx >= MAP_W OrElse my < 0 OrElse my >= MAP_H Then Return False
         Dim cellType As Integer = mapData(my, mx)
         Select Case cellType
-            Case 0
+            Case 0, 5, 6 ' san thuong, buc thap, buc cao: luon di vao duoc, khong can nhay
                 Return True
             Case 3 ' kien hang thap: chi qua duoc khi dang nhay du cao
                 Return playerZ >= CRATE_JUMP_HEIGHT
@@ -229,6 +256,16 @@ Partial Public Class Form1
                 Return crouchAmount >= CROUCH_PASS_THRESHOLD
             Case Else ' tuong da (1, 2) luon chan
                 Return False
+        End Select
+    End Function
+
+    ' Do cao san cua 1 loai o (0 = san thuong / khe chui / kien hang, dung khi dang o duoi/qua duoc).
+    ' Dung de noi suy standHeight khi nguoi choi buoc len/xuong buc (loai 5, 6).
+    Private Function CellFloorHeight(cellType As Integer) As Double
+        Select Case cellType
+            Case 5 : Return PLATFORM_LOW_HEIGHT
+            Case 6 : Return PLATFORM_HIGH_HEIGHT
+            Case Else : Return 0.0
         End Select
     End Function
 

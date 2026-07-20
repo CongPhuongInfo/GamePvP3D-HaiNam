@@ -39,7 +39,7 @@ if not exist bin mkdir bin
 "%VBC%" /target:winexe /out:bin\GamePvP3D_HaiNam.exe /optimize+ /optionstrict+ /optionexplicit+ ^
     /reference:System.dll,System.Drawing.dll,System.Windows.Forms.dll ^
     src\Form1.vb src\GameInput.vb src\GameCombat.vb src\GameHub.vb src\GameAssets.vb src\GameWorld.vb src\GameRender.vb src\GameHud.vb ^
-    src\ConnectForm.vb src\GameModels.vb src\NetworkHub.vb src\NetworkPeer.vb
+    src\GameMaps.vb src\ConnectForm.vb src\GameModels.vb src\NetworkHub.vb src\NetworkPeer.vb
 
 if errorlevel 1 (
     echo.

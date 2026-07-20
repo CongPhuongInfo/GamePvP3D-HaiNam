@@ -293,6 +293,43 @@ Partial Public Class Form1
         heldItemName = If(item Is Nothing, "(chua trang bi)", item.DisplayName)
     End Sub
 
+    ' Vat vu khi/vat pham dang chon (o dang active) ra ngoai the gioi, ngay truoc mat nguoi
+    ' choi. Phim Del. O trong (chua trang bi gi) thi khong lam gi ca.
+    Private Sub DropHeldItem()
+        Dim item As ItemDefinition = CurrentItem()
+        If item Is Nothing Then Return
+
+        CancelBowDraw() ' phong khi dang keo cung ma vat: huy luon, khong ban
+
+        Dim dropX As Double = playerX + Math.Cos(playerAngle) * 0.6
+        Dim dropY As Double = playerY + Math.Sin(playerAngle) * 0.6
+
+        inventorySlots(activeSlotIndex).Item = Nothing
+        SyncHeldItemFromSlot()
+
+        ' Khac voi nhat do (co the tranh chap giua nhieu nguoi cung lao vao 1 vat, can Host
+        ' phan xu ai nhat truoc), vat do la tai san cua chinh minh nen KHONG can "xin phep"
+        ' Host moi duoc hien - hien ngay lap tuc tren may cua minh (du la Host, Client, hay
+        ' Solo), Host van la noi luu du lieu goc nhung chi de dong bo cho NGUOI KHAC thay,
+        ' khong lam nguoi vat phai cho.
+        worldItems.Add(New WorldItemSpawn() With {.Id = nextWorldItemId, .Pos = New PointF(CSng(dropX), CSng(dropY)), .ItemId = item.Id})
+        nextWorldItemId += 1
+
+        If curNetMode = NetMode.Client Then
+            ' Chi la THONG BAO cho Host de Host cap nhat du lieu goc va bao cho nguoi khac,
+            ' khong phai xin phep - vat pham cua minh da hien tren may minh roi, khong doi
+            ' phan hoi. Lan ITEMSYNC ke tiep tu Host se tu dong khop lai (thay toan bo danh
+            ' sach), khong tao trung do vi ITEMSYNC luon GHI DE toan bo chu khong cong don.
+            If peer IsNot Nothing AndAlso peer.IsConnected Then
+                peer.SendLine("ITEMDROPREQ|" & localSlot & "|" & item.Id & "|" &
+                              dropX.ToString(CultureInfo.InvariantCulture) & "|" &
+                              dropY.ToString(CultureInfo.InvariantCulture))
+            End If
+        ElseIf curNetMode = NetMode.Host Then
+            hub.Broadcast(BuildItemSyncLine("ITEMSYNC"))
+        End If
+    End Sub
+
     ' Icon duoc cache lai (chi doc dia 1 lan cho moi ten file), Nothing = chua co
     ' anh rieng thi HUD se tu ve o mau + chu cai dau thay the.
     Private Function GetItemIcon(item As ItemDefinition) As Bitmap

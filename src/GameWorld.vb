@@ -77,7 +77,8 @@ Partial Public Class Form1
                         For c As Integer = 0 To count - 1
                             Dim px As Single = x + 0.15F + CSng(decorRng.NextDouble()) * 0.7F
                             Dim py As Single = y + 0.15F + CSng(decorRng.NextDouble()) * 0.7F
-                            Dim kind As Integer = If(decorRng.NextDouble() < 0.75, 0, 1)
+                            Dim kindRoll As Double = decorRng.NextDouble()
+                            Dim kind As Integer = If(kindRoll < 0.6, 0, If(kindRoll < 0.85, 1, 2)) ' 60% co, 25% hoa, 15% cay nen
                             decorations.Add(New DecorationItem() With {
                                 .Pos = New PointF(px, py),
                                 .Kind = kind,
@@ -103,6 +104,7 @@ Partial Public Class Form1
         CheckItemPickup()
         UpdateProjectiles(dt)
         If attackSwingTime > 0.0 Then attackSwingTime = Math.Max(0.0, attackSwingTime - dt)
+        If pickupAnimTime > 0.0 Then pickupAnimTime = Math.Max(0.0, pickupAnimTime - dt)
         UpdateRemoteAnimations(dt)
         NetworkTick()
         Me.Invalidate()
@@ -119,6 +121,7 @@ Partial Public Class Form1
             Dim ddx As Double = m.Pos.X - playerX
             Dim ddy As Double = m.Pos.Y - playerY
             If (ddx * ddx + ddy * ddy) < 0.16 Then
+                pickupAnimTime = PICKUP_ANIM_DURATION
                 If curNetMode = NetMode.Host Then
                     ApplyPickup(0, m.Id)
                 Else
@@ -146,6 +149,7 @@ Partial Public Class Form1
             Dim ddy As Double = m.Pos.Y - playerY
             If (ddx * ddx + ddy * ddy) < 0.16 AndAlso Not pendingPickupRequests.Contains(m.Id) Then
                 pendingPickupRequests.Add(m.Id)
+                pickupAnimTime = PICKUP_ANIM_DURATION
                 If peer IsNot Nothing AndAlso peer.IsConnected Then
                     peer.SendLine("PICKREQ|" & localSlot & "|" & m.Id)
                 End If

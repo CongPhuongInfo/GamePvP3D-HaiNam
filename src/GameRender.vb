@@ -14,8 +14,342 @@ Imports System.Windows.Forms
 
 Partial Public Class Form1
 
+    ' ---------------------------------------------------------------
+    '  Anh sang diem tu den duoc (torch light): tra ve muc do sang cong
+    '  them (0..1) tai 1 toa do the gioi, co nhap nhay nhe theo thoi gian.
+    ' ---------------------------------------------------------------
+    Private Function TorchLightAmount(wx As Double, wy As Double) As Double
+        Dim total As Double = 0.0
+        For Each t As TorchLight In torchLights
+            Dim dx As Double = wx - t.X
+            Dim dy As Double = wy - t.Y
+            Dim d As Double = Math.Sqrt(dx * dx + dy * dy)
+            If d < t.Radius Then
+                Dim flicker As Double = 0.85 + 0.15 * Math.Sin(worldTime * 9.0 + t.FlickerSeed)
+                total += (1.0 - d / t.Radius) * flicker
+            End If
+        Next
+        Return Math.Min(1.0, total)
+    End Function
+
+    ' ---------------------------------------------------------------
+    '  To mau pixel theo do sang khoang cach (fog) + anh sang den (litAmount),
+    '  dong thoi pha dan mau ve FOG_COLOR khi o xa - tao chieu sau thay vi
+    '  chi lam toi don thuan nhu ShadeColor goc.
+    ' ---------------------------------------------------------------
+    Private Function ShadeColorFogLit(srcColor As Integer, fog As Double, litAmount As Double) As Integer
+        Dim brightness As Double = Math.Min(1.15, fog + litAmount * TORCH_BRIGHTNESS)
+        Dim r As Integer = (srcColor >> 16) And &HFF
+        Dim g As Integer = (srcColor >> 8) And &HFF
+        Dim b As Integer = srcColor And &HFF
+        r = CInt(r * brightness)
+        g = CInt(g * brightness)
+        b = CInt(b * brightness)
+
+        Dim fogMix As Double = Math.Max(0.0, 1.0 - fog) * 0.6
+        r = CInt(r * (1.0 - fogMix) + FOG_COLOR_R * fogMix)
+        g = CInt(g * (1.0 - fogMix) + FOG_COLOR_G * fogMix)
+        b = CInt(b * (1.0 - fogMix) + FOG_COLOR_B * fogMix)
+
+        Return ToArgb(r, g, b)
+    End Function
+
+    ' ---------------------------------------------------------------
+    '  Ve bong do gia hinh elip mo tren san ngay duoi 1 sprite, tao cam
+    '  giac vat "dinh" xuong dat thay vi lo lung. Goi truoc khi ve pixel
+    '  sprite chinh (de bong nam duoi, sprite ve de len tren).
+    ' ---------------------------------------------------------------
+    Private Sub DrawGroundShadow(centerScreenX As Integer, feetScreenY As Integer, widthPx As Integer, dist As Double)
+        If dist >= SHADOW_MAX_DIST Then Return
+        Dim shadowW As Integer = Math.Max(2, CInt(widthPx * 0.5))
+        Dim shadowH As Integer = Math.Max(1, shadowW \ 3)
+        Dim x0 As Integer = Math.Max(0, centerScreenX - shadowW)
+        Dim x1 As Integer = Math.Min(RES_W - 1, centerScreenX + shadowW)
+        Dim y0 As Integer = Math.Max(0, feetScreenY - shadowH)
+        Dim y1 As Integer = Math.Min(RES_H - 1, feetScreenY + shadowH)
+        For sy As Integer = y0 To y1
+            Dim ny As Double = (sy - feetScreenY) / CDbl(Math.Max(1, shadowH))
+            Dim rowOff As Integer = sy * RES_W
+            For sx As Integer = x0 To x1
+                If dist >= zBuffer(sx) Then Continue For
+                Dim nx As Double = (sx - centerScreenX) / CDbl(Math.Max(1, shadowW))
+                Dim r2 As Double = nx * nx + ny * ny
+                If r2 > 1.0 Then Continue For
+                Dim darkenAmt As Double = (1.0 - r2) * 0.5
+                Dim idx As Integer = rowOff + sx
+                Dim c As Integer = pixelBuf(idx)
+                Dim rr As Integer = CInt(((c >> 16) And &HFF) * (1.0 - darkenAmt))
+                Dim gg As Integer = CInt(((c >> 8) And &HFF) * (1.0 - darkenAmt))
+                Dim bb As Integer = CInt((c And &HFF) * (1.0 - darkenAmt))
+                pixelBuf(idx) = &HFF000000 Or (rr << 16) Or (gg << 8) Or bb
+            Next
+        Next
+    End Sub
+
+    ' ---------------------------------------------------------------
+    '  Toi nhe 4 goc man hinh (vignette), goi 1 lan cuoi cung sau khi ve
+    '  xong toan bo canh + sprite, truoc khi Blit ra bitmap.
+    ' ---------------------------------------------------------------
+    Private Sub ApplyVignette()
+        Dim cx As Double = RES_W / 2.0
+        Dim cy As Double = RES_H / 2.0
+        Dim maxDist As Double = Math.Sqrt(cx * cx + cy * cy)
+        For y As Integer = 0 To RES_H - 1
+            Dim dy As Double = y - cy
+            Dim rowOff As Integer = y * RES_W
+            For x As Integer = 0 To RES_W - 1
+                Dim dx As Double = x - cx
+                Dim dist As Double = Math.Sqrt(dx * dx + dy * dy) / maxDist
+                If dist > VIGNETTE_START Then
+                    Dim t As Double = Math.Min(1.0, (dist - VIGNETTE_START) / (1.0 - VIGNETTE_START))
+                    Dim darken As Double = 1.0 - t * VIGNETTE_STRENGTH
+                    Dim idx As Integer = rowOff + x
+                    Dim c As Integer = pixelBuf(idx)
+                    Dim r As Integer = CInt(((c >> 16) And &HFF) * darken)
+                    Dim g As Integer = CInt(((c >> 8) And &HFF) * darken)
+                    Dim b As Integer = CInt((c And &HFF) * darken)
+                    pixelBuf(idx) = &HFF000000 Or (r << 16) Or (g << 8) Or b
+                End If
+            Next
+        Next
+    End Sub
+
+    ' ---------------------------------------------------------------
+    '  Sinh texture vo cay va san co BANG CONG THUC, khong can file anh
+    '  nao ca (cung tinh than voi GrassPixel/FlowerPixel da co san).
+    '  Goi 1 lan trong Sub New, NGAY SAU LoadTextures() - se GHI DE
+    '  texFloor da nap tu floor.png (neu co) bang co/dat rung.
+    ' ---------------------------------------------------------------
+    ' ---------------------------------------------------------------
+    '  Thu nap 1 file anh that tu Assets\Forest\<fileName> (128x128 ARGB).
+    '  Tra ve Nothing neu file khong ton tai, loi khi doc, hoac SAI kich
+    '  thuoc (bat buoc dung 128x128 de khop voi TEX_SIZE, tranh meo hinh).
+    ' ---------------------------------------------------------------
+    Private Function TryLoadForestTexture(fileName As String) As Integer()
+        Dim fullPath As String = System.IO.Path.Combine(Application.StartupPath, "Assets", "Forest", fileName)
+        If Not System.IO.File.Exists(fullPath) Then Return Nothing
+        Try
+            Using bmp As New Bitmap(fullPath)
+                If bmp.Width <> TEX_SIZE OrElse bmp.Height <> TEX_SIZE Then Return Nothing
+                Dim result(TEX_SIZE * TEX_SIZE - 1) As Integer
+                Dim rect As New Rectangle(0, 0, TEX_SIZE, TEX_SIZE)
+                Dim bd As BitmapData = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb)
+                Marshal.Copy(bd.Scan0, result, 0, TEX_SIZE * TEX_SIZE)
+                bmp.UnlockBits(bd)
+                Return result
+            End Using
+        Catch
+            Return Nothing
+        End Try
+    End Function
+
+    ' Giong TryLoadForestTexture nhung KHONG bat buoc 128x128 (dung cho sprite billboard
+    ' nhu cay nen - kich thuoc that duoc tra ve qua outW/outH de sample dung ti le).
+    Private Function TryLoadForestSprite(fileName As String, ByRef outW As Integer, ByRef outH As Integer) As Integer()
+        Dim fullPath As String = System.IO.Path.Combine(Application.StartupPath, "Assets", "Forest", fileName)
+        If Not System.IO.File.Exists(fullPath) Then Return Nothing
+        Try
+            Using bmp As New Bitmap(fullPath)
+                outW = bmp.Width
+                outH = bmp.Height
+                Dim result(outW * outH - 1) As Integer
+                Dim rect As New Rectangle(0, 0, outW, outH)
+                Dim bd As BitmapData = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb)
+                Marshal.Copy(bd.Scan0, result, 0, outW * outH)
+                bmp.UnlockBits(bd)
+                Return result
+            End Using
+        Catch
+            Return Nothing
+        End Try
+    End Function
+
+    Private Sub GenerateForestTextures()
+        ' ---- Vo cay (loai o 7) ----
+        Dim realBark() As Integer = TryLoadForestTexture("tree_bark.png")
+        If realBark IsNot Nothing Then
+            texTreeBark = realBark
+        Else
+            Dim barkRng As New Random(20260719)
+            texTreeBark = New Integer(TEX_SIZE * TEX_SIZE - 1) {}
+            For y As Integer = 0 To TEX_SIZE - 1
+                For x As Integer = 0 To TEX_SIZE - 1
+                    Dim ridge As Double = Math.Sin(x * 0.35 + Math.Sin(y * 0.05) * 2.0) * 0.5 + 0.5
+                    Dim noise As Double = barkRng.NextDouble() * 0.15
+                    Dim shade As Double = 0.45 + ridge * 0.35 + noise
+                    Dim r As Integer = Math.Min(255, CInt(92 * shade))
+                    Dim g As Integer = Math.Min(255, CInt(64 * shade))
+                    Dim b As Integer = Math.Min(255, CInt(42 * shade))
+                    texTreeBark(y * TEX_SIZE + x) = ToArgb(r, g, b)
+                Next
+            Next
+        End If
+
+        ' ---- Bui co ram (loai o 8) - dung lam vien ban do ngoai troi thay cho tuong da,
+        '      de co cam giac "het duong vi bi co rung chan" thay vi "dung tuong". Tha
+        '      Assets\Forest\bush_wall.png (anh that, ne 128x128) de ghi de len ban tu sinh. ----
+        Dim realBush() As Integer = TryLoadForestTexture("bush_wall.png")
+        If realBush IsNot Nothing Then
+            texBushWall = realBush
+        Else
+            Dim bushRng As New Random(20260721)
+            texBushWall = New Integer(TEX_SIZE * TEX_SIZE - 1) {}
+            For y As Integer = 0 To TEX_SIZE - 1
+                For x As Integer = 0 To TEX_SIZE - 1
+                    ' Nhieu cum la chong len nhau (vai tan so sin khac nhau) de trong
+                    ' "ram rap" thay vi mot mau phang - gan giong bui/tan la thap.
+                    Dim clump As Double = Math.Sin(x * 0.5 + y * 0.31) * 0.5 +
+                                           Math.Sin(x * 0.19 - y * 0.47 + 1.7) * 0.3 +
+                                           Math.Sin((x + y) * 0.61) * 0.2
+                    clump = clump * 0.5 + 0.5
+                    Dim noise As Double = bushRng.NextDouble() * 0.2
+                    Dim shade As Double = 0.35 + clump * 0.45 + noise
+                    ' Thinh thoang diem toi de gia lam khe ho giua cac cum la.
+                    Dim gap As Boolean = bushRng.NextDouble() < 0.05
+                    If gap Then shade *= 0.5
+                    Dim r As Integer = Math.Min(255, CInt(58 * shade))
+                    Dim g As Integer = Math.Min(255, CInt(96 * shade))
+                    Dim b As Integer = Math.Min(255, CInt(40 * shade))
+                    texBushWall(y * TEX_SIZE + x) = ToArgb(r, g, b)
+                Next
+            Next
+        End If
+
+        ' ---- Vach da (loai o 9) ----
+        Dim realCliff() As Integer = TryLoadForestTexture("cliff_wall.png")
+        If realCliff IsNot Nothing Then
+            texCliffWall = realCliff
+        Else
+            Dim cliffRng As New Random(20260722)
+            texCliffWall = New Integer(TEX_SIZE * TEX_SIZE - 1) {}
+            For y As Integer = 0 To TEX_SIZE - 1
+                For x As Integer = 0 To TEX_SIZE - 1
+                    Dim facet As Double = Math.Sin(x * 0.22 + y * 0.09) * 0.5 + Math.Sin(y * 0.31 - x * 0.05) * 0.3
+                    facet = facet * 0.5 + 0.5
+                    Dim noise As Double = cliffRng.NextDouble() * 0.2
+                    Dim shade As Double = 0.4 + facet * 0.4 + noise
+                    Dim r As Integer = Math.Min(255, CInt(120 * shade))
+                    Dim g As Integer = Math.Min(255, CInt(114 * shade))
+                    Dim b As Integer = Math.Min(255, CInt(100 * shade))
+                    texCliffWall(y * TEX_SIZE + x) = ToArgb(r, g, b)
+                Next
+            Next
+        End If
+
+        ' ---- Khe nut dat (loai o 10) ----
+        Dim realCrevice() As Integer = TryLoadForestTexture("crevice_wall.png")
+        If realCrevice IsNot Nothing Then
+            texCreviceWall = realCrevice
+        Else
+            Dim crevRng As New Random(20260723)
+            texCreviceWall = New Integer(TEX_SIZE * TEX_SIZE - 1) {}
+            For y As Integer = 0 To TEX_SIZE - 1
+                For x As Integer = 0 To TEX_SIZE - 1
+                    Dim crack As Double = Math.Sin(x * 0.4 + y * 0.15) * Math.Sin(y * 0.28 - x * 0.12)
+                    Dim noise As Double = crevRng.NextDouble() * 0.18
+                    Dim shade As Double = 0.5 + crack * 0.25 + noise
+                    Dim r As Integer = Math.Min(255, CInt(150 * shade))
+                    Dim g As Integer = Math.Min(255, CInt(112 * shade))
+                    Dim b As Integer = Math.Min(255, CInt(80 * shade))
+                    texCreviceWall(y * TEX_SIZE + x) = ToArgb(r, g, b)
+                Next
+            Next
+        End If
+
+        ' ---- Bo suoi (loai o 11) ----
+        Dim realRiverbank() As Integer = TryLoadForestTexture("riverbank_wall.png")
+        If realRiverbank IsNot Nothing Then
+            texRiverbankWall = realRiverbank
+        Else
+            Dim riverRng As New Random(20260724)
+            texRiverbankWall = New Integer(TEX_SIZE * TEX_SIZE - 1) {}
+            For y As Integer = 0 To TEX_SIZE - 1
+                For x As Integer = 0 To TEX_SIZE - 1
+                    Dim ripple As Double = Math.Sin(x * 0.3 + y * 0.06) * 0.5 + 0.5
+                    Dim noise As Double = riverRng.NextDouble() * 0.2
+                    Dim shade As Double = 0.4 + ripple * 0.35 + noise
+                    Dim r As Integer = Math.Min(255, CInt(90 * shade))
+                    Dim g As Integer = Math.Min(255, CInt(110 * shade))
+                    Dim b As Integer = Math.Min(255, CInt(120 * shade))
+                    texRiverbankWall(y * TEX_SIZE + x) = ToArgb(r, g, b)
+                Next
+            Next
+        End If
+
+        ' ---- San co ----
+        Dim realFloor() As Integer = TryLoadForestTexture("forest_floor.png")
+        If realFloor IsNot Nothing Then
+            texFloor = realFloor
+        Else
+            Dim floorRng As New Random(20260720)
+            texFloor = New Integer(TEX_SIZE * TEX_SIZE - 1) {}
+            For y As Integer = 0 To TEX_SIZE - 1
+                For x As Integer = 0 To TEX_SIZE - 1
+                    Dim n As Double = (Math.Sin(x * 0.18 + y * 0.23) + Math.Sin(x * 0.07 - y * 0.11)) * 0.5
+                    n = n * 0.5 + 0.5
+                    Dim r As Integer, g As Integer, b As Integer
+                    If floorRng.NextDouble() < 0.12 Then
+                        Dim s As Double = 0.6 + n * 0.3
+                        r = CInt(110 * s) : g = CInt(80 * s) : b = CInt(50 * s)
+                    Else
+                        Dim s As Double = 0.55 + n * 0.45
+                        r = CInt(45 * s) : g = CInt(95 * s) : b = CInt(35 * s)
+                    End If
+                    texFloor(y * TEX_SIZE + x) = ToArgb(Math.Min(255, r), Math.Min(255, g), Math.Min(255, b))
+                Next
+            Next
+        End If
+
+        ' ---- Khuc go do (loai o 3) ----
+        Dim realLog() As Integer = TryLoadForestTexture("fallen_log.png")
+        If realLog IsNot Nothing Then
+            texCrate = realLog
+        Else
+            Dim logRng As New Random(20260721)
+            texCrate = New Integer(TEX_SIZE * TEX_SIZE - 1) {}
+            For y As Integer = 0 To TEX_SIZE - 1
+                For x As Integer = 0 To TEX_SIZE - 1
+                    Dim ring As Double = Math.Sin(y * 0.55 + Math.Sin(x * 0.04) * 3.0) * 0.5 + 0.5
+                    Dim noise As Double = logRng.NextDouble() * 0.12
+                    Dim shade As Double = 0.4 + ring * 0.4 + noise
+                    Dim r As Integer = Math.Min(255, CInt(120 * shade))
+                    Dim g As Integer = Math.Min(255, CInt(84 * shade))
+                    Dim b As Integer = Math.Min(255, CInt(50 * shade))
+                    texCrate(y * TEX_SIZE + x) = ToArgb(r, g, b)
+                Next
+            Next
+        End If
+
+        ' ---- Khe da phu reu (loai o 4) ----
+        Dim realRock() As Integer = TryLoadForestTexture("mossy_rock.png")
+        If realRock IsNot Nothing Then
+            texVent = realRock
+        Else
+            Dim rockRng As New Random(20260722)
+            texVent = New Integer(TEX_SIZE * TEX_SIZE - 1) {}
+            For y As Integer = 0 To TEX_SIZE - 1
+                For x As Integer = 0 To TEX_SIZE - 1
+                    Dim n As Double = (Math.Sin(x * 0.12 + y * 0.09) + Math.Sin(x * 0.21 - y * 0.17)) * 0.5 + 0.5
+                    Dim mossChance As Double = rockRng.NextDouble()
+                    Dim r As Integer, g As Integer, b As Integer
+                    If mossChance < 0.3 + n * 0.2 Then
+                        Dim s As Double = 0.5 + n * 0.4
+                        r = CInt(55 * s) : g = CInt(95 * s) : b = CInt(45 * s)
+                    Else
+                        Dim s As Double = 0.5 + n * 0.35
+                        r = CInt(110 * s) : g = CInt(108 * s) : b = CInt(102 * s)
+                    End If
+                    texVent(y * TEX_SIZE + x) = ToArgb(Math.Min(255, r), Math.Min(255, g), Math.Min(255, b))
+                Next
+            Next
+        End If
+
+        ' ---- Cay nen trang tri (sprite billboard, Kind=2) - anh khong bat buoc 128x128 ----
+        texTree = TryLoadForestSprite("tree_billboard.png", texTreeW, texTreeH)
+    End Sub
+
     Private Sub RenderFrame()
-        Dim skyColor As Integer = ToArgb(40, 40, 70)
+        Dim skyColor As Integer = ToArgb(120, 172, 224) ' troi xanh ban ngay thay vi mau xanh dem cu
         Dim horizon As Integer = RES_H \ 2 + viewShiftPx
         If horizon < 0 Then horizon = 0
         If horizon > RES_H Then horizon = RES_H
@@ -68,7 +402,7 @@ Partial Public Class Form1
             Dim floorX As Double = playerX + rowDistance * rayDirX0
             Dim floorY As Double = playerY + rowDistance * rayDirY0
 
-            Dim rowFog As Double = Math.Max(0.2, 1.0 - rowDistance / 12.0)
+            Dim rowFog As Double = Math.Max(0.2, 1.0 - rowDistance / mapFogDist)
             Dim rowOff As Integer = y * RES_W
 
             For x As Integer = 0 To RES_W - 1
@@ -76,9 +410,10 @@ Partial Public Class Form1
                 Dim cellY As Integer = CInt(Math.Floor(floorY))
                 Dim tx As Integer = CInt((floorX - cellX) * TEX_SIZE) And (TEX_SIZE - 1)
                 Dim ty As Integer = CInt((floorY - cellY) * TEX_SIZE) And (TEX_SIZE - 1)
+                Dim litAmount As Double = TorchLightAmount(floorX, floorY)
                 floorX += floorStepX
                 floorY += floorStepY
-                pixelBuf(rowOff + x) = ShadeColor(texFloor(ty * TEX_SIZE + tx), rowFog)
+                pixelBuf(rowOff + x) = ShadeColorFogLit(texFloor(ty * TEX_SIZE + tx), rowFog, litAmount)
             Next
         Next
 
@@ -126,10 +461,15 @@ Partial Public Class Form1
                     hit = True
                 Else
                     Dim cellType As Integer = mapData(mapY, mapX)
-                    If cellType = 1 OrElse cellType = 2 Then
+                    If cellType = 1 OrElse cellType = 2 OrElse cellType = 7 OrElse cellType = 8 OrElse cellType = 9 OrElse cellType = 10 OrElse cellType = 11 Then
                         hit = True
-                    ElseIf cellType = 3 OrElse cellType = 4 Then
-                        Dim passable As Boolean = If(cellType = 3, playerZ >= CRATE_JUMP_HEIGHT, crouchAmount >= CROUCH_PASS_THRESHOLD)
+                    ElseIf cellType = 3 OrElse cellType = 4 OrElse cellType = 5 OrElse cellType = 6 Then
+                        Dim passable As Boolean
+                        Select Case cellType
+                            Case 3 : passable = playerZ >= CRATE_JUMP_HEIGHT
+                            Case 4 : passable = crouchAmount >= CROUCH_PASS_THRESHOLD
+                            Case Else : passable = True ' buc 5, 6: luon di/nhin xuyen qua duoc, khong chan tia
+                        End Select
                         If passable Then
                             ' Nguoi choi du kien nhay/ngoi qua duoc: khong chan tia, nhung ghi lai
                             ' vi tri de sau do ve khoi nua-chieu-cao dung cho o nay.
@@ -176,6 +516,11 @@ Partial Public Class Form1
                 Case 2 : tex = texWall2
                 Case 3 : tex = texCrate
                 Case 4 : tex = texVent
+                Case 7 : tex = texTreeBark
+                Case 8 : tex = texBushWall
+                Case 9 : tex = texCliffWall
+                Case 10 : tex = texCreviceWall
+                Case 11 : tex = texRiverbankWall
                 Case Else : tex = texWall1
             End Select
 
@@ -192,13 +537,17 @@ Partial Public Class Form1
             If side = 1 AndAlso rayDirY < 0 Then texX = TEX_SIZE - texX - 1
             texX = Math.Max(0, Math.Min(TEX_SIZE - 1, texX))
 
-            Dim fog As Double = Math.Max(0.25, 1.0 - perpWallDist / 12.0)
+            Dim fog As Double = Math.Max(0.25, 1.0 - perpWallDist / mapFogDist)
             If side = 1 Then fog *= 0.7
+
+            Dim wallWorldX As Double = playerX + perpWallDist * rayDirX
+            Dim wallWorldY As Double = playerY + perpWallDist * rayDirY
+            Dim wallLit As Double = TorchLightAmount(wallWorldX, wallWorldY)
 
             For y As Integer = drawStart To drawEnd
                 Dim texY As Integer = CInt((y - viewShiftPx - wallScreenTop) * TEX_SIZE / CDbl(Math.Max(1, lineHeight)))
                 texY = Math.Max(0, Math.Min(TEX_SIZE - 1, texY))
-                pixelBuf(y * RES_W + x) = ShadeColor(tex(texY * TEX_SIZE + texX), fog)
+                pixelBuf(y * RES_W + x) = ShadeColorFogLit(tex(texY * TEX_SIZE + texX), fog, wallLit)
             Next
 
             ' Ve khoi nua-chieu-cao (kien hang / khe chui) ma tia da "nhin xuyen qua" o tren
@@ -210,12 +559,20 @@ Partial Public Class Form1
                 Dim obsMid As Integer = (obsTop + obsBot) \ 2
 
                 Dim slabStart As Integer, slabEnd As Integer
-                Dim obsTex() As Integer = If(obstacleType = 3, texCrate, texVent)
-                If obstacleType = 3 Then
-                    slabStart = obsMid : slabEnd = obsBot           ' kien hang: chiem nua duoi
-                Else
-                    slabStart = obsTop : slabEnd = obsMid            ' khe chui: chiem nua tren
-                End If
+                Dim obsTex() As Integer
+                Select Case obstacleType
+                    Case 3
+                        obsTex = texCrate
+                        slabStart = obsMid : slabEnd = obsBot           ' kien hang: chiem nua duoi
+                    Case 4
+                        obsTex = texVent
+                        slabStart = obsTop : slabEnd = obsMid            ' khe chui: chiem nua tren
+                    Case Else ' 5 (buc thap) hoac 6 (buc cao): khoi noi tu san len, cao theo dung ti le
+                        obsTex = If(obstacleType = 6, texWall2, texCrate)
+                        Dim hFrac As Double = If(obstacleType = 6, PLATFORM_HIGH_HEIGHT, PLATFORM_LOW_HEIGHT)
+                        slabStart = obsBot - CInt((obsBot - obsTop) * hFrac)
+                        slabEnd = obsBot
+                End Select
                 slabStart = Math.Max(0, slabStart)
                 slabEnd = Math.Min(RES_H - 1, slabEnd)
 
@@ -231,13 +588,17 @@ Partial Public Class Form1
                 If obstacleSide = 1 AndAlso rayDirY < 0 Then obsTexX = TEX_SIZE - obsTexX - 1
                 obsTexX = Math.Max(0, Math.Min(TEX_SIZE - 1, obsTexX))
 
-                Dim obsFog As Double = Math.Max(0.25, 1.0 - obstacleDist / 12.0)
+                Dim obsFog As Double = Math.Max(0.25, 1.0 - obstacleDist / mapFogDist)
                 If obstacleSide = 1 Then obsFog *= 0.7
+
+                Dim obsWorldX As Double = playerX + obstacleDist * rayDirX
+                Dim obsWorldY As Double = playerY + obstacleDist * rayDirY
+                Dim obsLit As Double = TorchLightAmount(obsWorldX, obsWorldY)
 
                 For y As Integer = slabStart To slabEnd
                     Dim texY As Integer = CInt((y - viewShiftPx - obsIdealTop) * TEX_SIZE / CDbl(Math.Max(1, obsLineHeight)))
                     texY = Math.Max(0, Math.Min(TEX_SIZE - 1, texY))
-                    pixelBuf(y * RES_W + x) = ShadeColor(obsTex(texY * TEX_SIZE + obsTexX), obsFog)
+                    pixelBuf(y * RES_W + x) = ShadeColorFogLit(obsTex(texY * TEX_SIZE + obsTexX), obsFog, obsLit)
                 Next
             End If
         Next
@@ -247,6 +608,8 @@ Partial Public Class Form1
         DrawMushroomSprites(dirX, dirY, planeX, planeY)
         DrawRemotePlayerSprites(dirX, dirY, planeX, planeY)
         DrawProjectileSprites(dirX, dirY, planeX, planeY)
+
+        ApplyVignette()
     End Sub
 
     ' ---------------------------------------------------------------
@@ -273,12 +636,12 @@ Partial Public Class Form1
             Dim transformY As Double = invDet * (-planeY * sx + planeX * sy)
             If transformY <= 0.1 Then Continue For
 
-            Dim fog As Double = Math.Max(0.3, 1.0 - transformY / 12.0)
+            Dim fog As Double = Math.Max(0.3, 1.0 - transformY / mapFogDist)
             Dim screenX As Integer = CInt((RES_W / 2.0) * (1.0 + transformX / transformY))
 
             ' Chan cay neo dung vao san (cung cong thuc voi floor-casting: p = 0.5*RES_H/dist)
             Dim groundY As Integer = RES_H \ 2 + viewShiftPx + CInt(0.5 * RES_H / transformY)
-            Dim worldHeight As Double = 0.4 * d.Scale
+            Dim worldHeight As Double = If(d.Kind = 2, 1.6, 0.4) * d.Scale ' cay nen cao hon han co/hoa
             Dim size As Integer = CInt((RES_H / transformY) * worldHeight)
             If size <= 0 Then Continue For
 
@@ -287,7 +650,7 @@ Partial Public Class Form1
             Dim drawStartX As Integer = Math.Max(0, screenX - size \ 2)
             Dim drawEndX As Integer = Math.Min(RES_W - 1, screenX + size \ 2)
 
-            Dim useTex() As Integer = If(d.Kind = 0, texGrass, texFlower)
+            Dim useTex() As Integer = If(d.Kind = 0, texGrass, If(d.Kind = 1, texFlower, Nothing))
             Dim texW As Integer = If(d.Kind = 0, texGrassW, texFlowerW)
             Dim texH As Integer = If(d.Kind = 0, texGrassH, texFlowerH)
 
@@ -298,7 +661,14 @@ Partial Public Class Form1
                     Dim v As Double = (y - drawStartY) / CDbl(Math.Max(1, drawEndY - drawStartY))
                     Dim col As Integer = 0
 
-                    If useTex IsNot Nothing Then
+                    If d.Kind = 2 AndAlso texTree IsNot Nothing Then
+                        Dim tx As Integer = Math.Max(0, Math.Min(texTreeW - 1, CInt(u * texTreeW)))
+                        Dim ty As Integer = Math.Max(0, Math.Min(texTreeH - 1, CInt(v * texTreeH)))
+                        Dim srcColor As Integer = texTree(ty * texTreeW + tx)
+                        If ((srcColor >> 24) And &HFF) > 128 Then col = srcColor
+                    ElseIf d.Kind = 2 Then
+                        col = TreePixel(u, v, d.HueSeed)
+                    ElseIf useTex IsNot Nothing Then
                         Dim tx As Integer = Math.Max(0, Math.Min(texW - 1, CInt(u * texW)))
                         Dim ty As Integer = Math.Max(0, Math.Min(texH - 1, CInt(v * texH)))
                         Dim srcColor As Integer = useTex(ty * texW + tx)
@@ -320,6 +690,22 @@ Partial Public Class Form1
             Next
         Next
     End Sub
+
+    ' Cay nen trang tri (khong chan duong, chi tao chieu sau): than nau hep o duoi,
+    ' tan la hinh tron/oval lon phia tren, mau xanh la hoi lech theo HueSeed cho da dang.
+    Private Function TreePixel(u As Double, v As Double, hueSeed As Single) As Integer
+        If v > 0.78 AndAlso Math.Abs(u - 0.5) < 0.05 Then
+            Return ToArgb(70, 48, 30)
+        End If
+        Dim dx As Double = u - 0.5
+        Dim dy As Double = (v - 0.42) * 1.15
+        Dim edgeNoise As Double = 0.06 * Math.Sin(Math.Atan2(dy, dx) * 7.0 + hueSeed * 10.0)
+        If Math.Sqrt(dx * dx + dy * dy) < 0.40 + edgeNoise Then
+            Dim greenVariant As Double = 0.85 + 0.3 * hueSeed
+            Return ToArgb(CInt(35 * greenVariant), CInt(95 * greenVariant), CInt(35 * greenVariant))
+        End If
+        Return 0
+    End Function
 
     ' Bui co: 5 luoi co hep, cao thap khac nhau, hoi nghieng cho tu nhien.
     ' u,v trong [0,1] (v=1 la goc, v=0 la dinh). Tra ve 0 la trong suot.
@@ -386,16 +772,18 @@ Partial Public Class Form1
 
             If transformY <= 0.1 Then Continue For
 
-            Dim spriteFog As Double = Math.Max(0.3, 1.0 - transformY / 12.0)
+            Dim spriteFog As Double = Math.Max(0.3, 1.0 - transformY / mapFogDist)
 
             Dim spriteScreenX As Integer = CInt((RES_W / 2.0) * (1.0 + transformX / transformY))
-            Dim spriteSize As Integer = CInt(Math.Abs(RES_H / transformY))
+            Dim spriteSize As Integer = CInt(Math.Abs(RES_H / transformY) * 0.4)
             If spriteSize <= 0 Then Continue For
 
             Dim drawStartY As Integer = Math.Max(0, -spriteSize \ 2 + RES_H \ 2 + viewShiftPx)
             Dim drawEndY As Integer = Math.Min(RES_H - 1, spriteSize \ 2 + RES_H \ 2 + viewShiftPx)
             Dim drawStartX As Integer = Math.Max(0, -spriteSize \ 2 + spriteScreenX)
             Dim drawEndX As Integer = Math.Min(RES_W - 1, spriteSize \ 2 + spriteScreenX)
+
+            DrawGroundShadow(spriteScreenX, drawEndY, spriteSize, transformY)
 
             For stripe As Integer = drawStartX To drawEndX
                 If transformY >= zBuffer(stripe) Then Continue For
@@ -441,7 +829,7 @@ Partial Public Class Form1
             Dim transformY As Double = invDet * (-planeY * sx + planeX * sy)
             If transformY <= 0.1 Then Continue For
 
-            Dim spriteFog As Double = Math.Max(0.3, 1.0 - transformY / 12.0)
+            Dim spriteFog As Double = Math.Max(0.3, 1.0 - transformY / mapFogDist)
             Dim spriteScreenX As Integer = CInt((RES_W / 2.0) * (1.0 + transformX / transformY))
             Dim spriteSize As Integer = CInt(Math.Abs(RES_H / transformY) * 0.6)
             If spriteSize <= 0 Then Continue For
@@ -450,6 +838,8 @@ Partial Public Class Form1
             Dim drawEndY As Integer = Math.Min(RES_H - 1, spriteSize \ 2 + RES_H \ 2 + viewShiftPx)
             Dim drawStartX As Integer = Math.Max(0, -spriteSize \ 2 + spriteScreenX)
             Dim drawEndX As Integer = Math.Min(RES_W - 1, spriteSize \ 2 + spriteScreenX)
+
+            DrawGroundShadow(spriteScreenX, drawEndY, spriteSize, transformY)
 
             Dim iconW As Integer = 0, iconH As Integer = 0
             Dim iconPixels() As Integer = GetItemIconPixels(def, iconW, iconH)
@@ -656,7 +1046,7 @@ Partial Public Class Form1
             Dim transformY As Double = invDet * (-planeY * sx + planeX * sy)
             If transformY <= 0.1 Then Continue For
 
-            Dim spriteFog As Double = Math.Max(0.35, 1.0 - transformY / 12.0)
+            Dim spriteFog As Double = Math.Max(0.35, 1.0 - transformY / mapFogDist)
             Dim spriteScreenX As Integer = CInt((RES_W / 2.0) * (1.0 + transformX / transformY))
 
             ' "Tho" nhe khi dung yen: phong to/thu nho chieu cao theo nhip cham (tat dan khi
@@ -682,6 +1072,8 @@ Partial Public Class Form1
             Dim drawEndY As Integer = Math.Min(RES_H - 1, spriteHeight \ 2 + RES_H \ 2 + viewShiftPx - footShift)
             Dim drawStartX As Integer = Math.Max(0, -spriteWidth \ 2 + spriteScreenX)
             Dim drawEndX As Integer = Math.Min(RES_W - 1, spriteWidth \ 2 + spriteScreenX)
+
+            DrawGroundShadow(spriteScreenX, drawEndY, spriteWidth, transformY)
 
             For stripe As Integer = drawStartX To drawEndX
                 If transformY >= zBuffer(stripe) Then Continue For
@@ -796,7 +1188,7 @@ Partial Public Class Form1
             Dim transformY As Double = invDet * (-planeY * sx + planeX * sy)
             If transformY <= 0.1 Then Continue For
 
-            Dim spriteFog As Double = Math.Max(0.35, 1.0 - transformY / 12.0)
+            Dim spriteFog As Double = Math.Max(0.35, 1.0 - transformY / mapFogDist)
             Dim spriteScreenX As Integer = CInt((RES_W / 2.0) * (1.0 + transformX / transformY))
             Dim spriteSize As Integer = CInt(Math.Abs(RES_H / transformY) * 0.22)
             If spriteSize <= 0 Then Continue For

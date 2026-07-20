@@ -16,6 +16,7 @@ Public Class ConnectForm
     Public ResultMode As String = "solo"   ' "solo", "host", "join"
     Public ResultIp As String = "127.0.0.1"
     Public ResultPort As Integer = 27015
+    Public ResultMapIndex As Integer = 0   ' xem MapNames trong GameMaps.vb
 
     Private rbSolo As New RadioButton()
     Private rbHost As New RadioButton()
@@ -25,11 +26,14 @@ Public Class ConnectForm
     Private lblIp As New Label()
     Private lblPort As New Label()
     Private lblLocalIp As New Label()
+    Private lblMap As New Label()
+    Private cboMap As New ComboBox()
+    Private lblMapNote As New Label()
     Private btnStart As New Button()
 
     Public Sub New()
         Me.Text = "GamePvP 3D - Chon che do choi"
-        Me.ClientSize = New Size(360, 300)
+        Me.ClientSize = New Size(360, 340)
         Me.FormBorderStyle = FormBorderStyle.FixedDialog
         Me.MaximizeBox = False
         Me.MinimizeBox = False
@@ -74,13 +78,31 @@ Public Class ConnectForm
         txtPort.SetBounds(140, 171, 100, 22)
         Me.Controls.Add(txtPort)
 
+        ' Danh sach map lay tu GameMaps.vb (MapNames la Shared nen dung duoc tu ConnectForm
+        ' du 2 class khac nhau) - moi map moi them vao do se tu dong hien o day, khong can
+        ' sua ConnectForm them.
+        lblMap.Text = "Map:"
+        lblMap.SetBounds(20, 204, 110, 22)
+        Me.Controls.Add(lblMap)
+
+        cboMap.DropDownStyle = ComboBoxStyle.DropDownList
+        cboMap.SetBounds(140, 201, 180, 22)
+        cboMap.Items.AddRange(Form1.MapNames)
+        cboMap.SelectedIndex = 0
+        Me.Controls.Add(cboMap)
+
+        lblMapNote.Text = ""
+        lblMapNote.ForeColor = Color.DimGray
+        lblMapNote.SetBounds(20, 226, 320, 18)
+        Me.Controls.Add(lblMapNote)
+
         lblLocalIp.Text = ""
         lblLocalIp.ForeColor = Color.DimGray
-        lblLocalIp.SetBounds(20, 202, 320, 40)
+        lblLocalIp.SetBounds(20, 246, 320, 40)
         Me.Controls.Add(lblLocalIp)
 
         btnStart.Text = "Bat dau"
-        btnStart.SetBounds(120, 250, 120, 32)
+        btnStart.SetBounds(120, 292, 120, 32)
         AddHandler btnStart.Click, AddressOf BtnStart_Click
         Me.Controls.Add(btnStart)
         Me.AcceptButton = btnStart
@@ -95,6 +117,15 @@ Public Class ConnectForm
                                Environment.NewLine & "Nho mo port trong Firewall/Router neu choi qua mang LAN/Internet."
         Else
             lblLocalIp.Text = ""
+        End If
+
+        ' Ca 2 vai tro deu THAY duoc danh sach map (yeu cau: "ca Host lan Join deu thay danh
+        ' sach"), nhung chi Host/Solo la thuc su co hieu luc - Join luon dong bo THEO HOST
+        ' ngay khi vao phong (xem WELCOME trong GameHub.vb), lua chon o day chi de xem truoc.
+        If rbJoin.Checked Then
+            lblMapNote.Text = "(Chi de xem - Host se quyet dinh map thuc te khi ban vao phong)"
+        Else
+            lblMapNote.Text = "(Se ap dung khi bam Bat dau)"
         End If
     End Sub
 
@@ -118,6 +149,7 @@ Public Class ConnectForm
             ResultIp = txtIp.Text.Trim()
         End If
         ResultPort = port
+        ResultMapIndex = Math.Max(0, cboMap.SelectedIndex)
 
         Me.DialogResult = DialogResult.OK
         Me.Close()
